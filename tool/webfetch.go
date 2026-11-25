@@ -54,6 +54,23 @@ type WebFetchConfig struct {
 	// without Proxy or CACert: with DialContext set (and no InsecureTLS) it uses
 	// the http.DefaultTransport clone, keep-alive disabled.
 	DisableDirectRetry bool
+	// UserAgent, when set, supplies the User-Agent for each fetch (including the
+	// direct retry). An empty return leaves the header unset. nil uses
+	// DefaultWebFetchUserAgent.
+	UserAgent func(*http.Request) string
+}
+
+// DefaultWebFetchUserAgent is Chrome 158 on Windows (stable as of 2026-11-17).
+const DefaultWebFetchUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/158.0.0.0 Safari/537.36"
+
+func applyWebFetchUA(req *http.Request, fn func(*http.Request) string) {
+	if fn != nil {
+		if ua := fn(req); ua != "" {
+			req.Header.Set("User-Agent", ua)
+		}
+		return
+	}
+	req.Header.Set("User-Agent", DefaultWebFetchUserAgent)
 }
 
 // NewWebFetch builds the WebFetch tool: fetches a URL over HTTP(S) and returns
@@ -233,14 +250,14 @@ func webFetchRunner(cfg WebFetchConfig) func(context.Context, json.RawMessage, *
 		if err != nil {
 			return Errorf("Error: " + err.Error()), nil
 		}
-		req.Header.Set("user-agent", "norma/0.4")
+		applyWebFetchUA(req, cfg.UserAgent)
 		resp, err := client.Do(req)
 		// One direct retry when the proxied attempt failed for a proxy-caused reason.
 		// A non-proxy error (bad host, caller timeout/cancel) is returned as-is — a
 		// direct retry wouldn't fix it. The direct response is NOT captured by the proxy.
 		if err != nil && direct != nil && proxyLikelyErr(err) {
 			if r2, e2 := http.NewRequestWithContext(cctx, http.MethodGet, in.URL, nil); e2 == nil {
-				r2.Header.Set("user-agent", "norma/0.4")
+				applyWebFetchUA(r2, cfg.UserAgent)
 				if resp2, err2 := direct.Do(r2); err2 == nil {
 					resp, err = resp2, nil
 				} else {
